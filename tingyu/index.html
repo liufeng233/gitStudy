@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"><meta name="theme-color" content="#101f27"><meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'"><title>听雨 · 孤灯 | 雨夜山院</title><link rel="stylesheet" href="./style.css"></head>
+<body data-screen="title">
+<canvas id="game" aria-label="听雨孤灯，三维山间庭院动作游戏"></canvas><div id="grain"></div><div id="vignette"></div><div id="damage"></div>
+<header><div class="wordmark"><span class="seal">雨</span><span>听雨<span class="dot"> / </span>孤灯</span></div><div class="top-actions"><button id="sound" aria-label="开启声音">声音 · 关</button><button id="pause" class="in-game" aria-label="暂停游戏">暂停 <span class="key">Esc</span></button></div></header>
+<main id="title" class="screen">
+ <div class="title-copy"><div class="eyebrow"><i></i> 山 行 短 篇 · 壹</div><h1>听雨</h1><div class="subtitle"><span></span>孤 灯<span></span></div><p class="poem">雨落山院，灯照归人。<br>循一线灯火，破一夜长梦。</p><button id="start" class="primary" disabled><span id="load-label">正在点灯</span><span class="button-diamond">◇</span></button><button id="help" class="text-button">初入山院 · 操作指引</button><div class="session-note">一座山院 · 一柄长剑 · 约三分钟</div></div>
+ <div class="vertical-note">夜 雨 入 山 ｜ 一 灯 未 眠</div>
+ <footer><span>AN ORIGINAL RAIN-SOAKED TALE</span><span>建议戴上耳机<span class="footer-dot">·</span>可离线游玩</span></footer>
+</main>
+<div id="hud" class="in-game">
+ <section class="player-status"><div class="player-line"><span class="player-icon">行</span><span>过客<small>一剑听雨</small></span><span id="hp-number">120 / 120</span></div><div class="health-frame"><div id="health-trail"></div><div id="health-fill"></div></div><div class="status-foot"><span id="tea-count">回春茶 · 2 盏</span><span id="clock">00:00</span></div></section>
+ <section id="boss-hud" hidden><div class="boss-overline">山院守灯人</div><div class="boss-name">赤 霄<span id="boss-phase">灯火未歇</span></div><div class="boss-frame"><div id="boss-trail"></div><div id="boss-fill"></div></div><div class="boss-marks">◆<span>◆</span>◆</div></section>
+ <div class="objective"><div id="chapter">壹 · 雨中来客</div><p id="objective">驱散庭院中的影卫 <b>0 / 3</b></p></div>
+ <div id="combo" aria-live="polite"></div><div id="toast" aria-live="polite"></div>
+ <div class="skill-row">
+ <button class="skill utility" id="tea" aria-label="饮用回春茶，E键"><span class="skill-icon">♧</span><span class="skill-name">回春</span><kbd>E</kbd><span id="tea-badge">2</span></button>
+ <button class="skill" id="dash" aria-label="闪避，空格键"><svg viewBox="0 0 40 40"><path d="M4 26L24 10 18 24 34 16M5 32l9-5"/></svg><span class="skill-name">踏雨</span><kbd>Space</kbd><span class="cooldown" id="dash-cd"></span></button>
+ <button class="skill" id="special" aria-label="回风剑，K键"><svg viewBox="0 0 40 40"><path d="M31 9a15 15 0 1 0 0 22M32 4l-2 10-9-4M14 26l12-12M17 29l-6-6"/></svg><span class="skill-name">回风</span><kbd>K</kbd><span class="cooldown" id="special-cd"></span></button>
+ <button class="skill attack" id="attack" aria-label="连招攻击，J键或鼠标左键"><svg viewBox="0 0 40 40"><path d="M13 27L30 6l3 2-16 23M10 24l10 8M8 35l6-7"/></svg><span class="skill-name">听雨剑</span><kbd>J / 左键</kbd></button>
+ </div><div class="desktop-move"><kbd>W</kbd><div><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>移动</span></div></div>
+ <div id="joystick" aria-label="移动摇杆"><div id="stick"></div><span>移动</span></div>
+</div>
+<div id="cinematic" hidden><span>山院深处，旧灯再燃。</span><h2>守灯人 · 赤霄</h2><p>「这一盏，还不能熄。」</p></div>
+<section id="modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="panel"><div class="eyebrow">听 雨 · 孤 灯</div><h2 id="modal-title">行路须知</h2><div id="help-content"><p>驱散三名影卫，击败守灯人，让山院重归宁静。</p><div class="controls-grid"><span><kbd>WASD / ↑↓←→</kbd>移动</span><span><kbd>J / 鼠标左键</kbd>三段连招</span><span><kbd>Space</kbd>踏雨闪避</span><span><kbd>K</kbd>回风剑 · 八秒冷却</span><span><kbd>E</kbd>饮茶回复 · 两次</span><span><kbd>Esc</kbd>暂停 / 继续</span></div><p class="tip">可按住攻击。靠近敌人时会自动转向。<br>看见朱红预警，及时闪避；剑也能斩断飞来的符火。</p><p class="touch-tip">触屏：左侧摇杆移动，右侧按钮出招。横屏视野更开阔。</p></div><div id="settings"><label>音量 <input id="volume" type="range" min="0" max="100" value="55"></label><label><input id="reduce-motion" type="checkbox"> 减弱镜头震动与闪光</label><label>画质 <select id="quality"><option value="high">氛围 · 泛光与阴影</option><option value="low">流畅 · 降低渲染开销</option></select></label></div><button id="resume" class="primary">继续行路 <span>◇</span></button><button id="back-title" class="text-button">返回标题</button></div></section>
+<section id="result" class="screen result" hidden><div class="result-card"><span class="eyebrow" id="result-eyebrow">雨 歇 · 灯 归</span><h2 id="result-title">一夜听雨</h2><p id="result-story">山院的风，终于静了下来。</p><div class="rating" id="rating">S<small>剑心澄明</small></div><div class="result-stats"><div><span>行路用时</span><strong id="result-time">02:16</strong></div><div><span>命中剑数</span><strong id="result-hits">72</strong></div><div><span>剩余气血</span><strong id="result-health">86</strong></div></div><button id="retry" class="primary">再听一场雨 <span>◇</span></button><button id="result-home" class="text-button">返回山院</button></div></section>
+<div id="fatal" hidden role="alert"><h2>山院未能展开</h2><p id="fatal-detail">当前设备需要支持 WebGL 2。请在支持的浏览器中打开。</p><button id="reload" class="primary">重新点灯</button></div><script src="./game.js" defer></script></body></html>
