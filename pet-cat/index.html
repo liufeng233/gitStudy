@@ -239,7 +239,6 @@
       cursor: grabbing;
     }
 
-    /* Fallback blend when white-bg cutout is unavailable (e.g. file:// CORS) */
     canvas#catCanvas.blend-fallback {
       mix-blend-mode: var(--stage-blend);
     }
@@ -541,10 +540,11 @@
         }
       };
 
-      const GRID_COLS = 12;
-      const GRID_ROWS = 12;
-      const SPRING_K = 210;
-      const SPRING_DAMP = 14.5;
+      // Finer 20x20 deformable grid with underdamped jelly spring tuning
+      const GRID_COLS = 20;
+      const GRID_ROWS = 20;
+      const SPRING_K = 155;        // Spring stiffness toward target offset
+      const SPRING_DAMP = 10.5;    // Underdamped (~0.42 zeta) for visible jelly bounce
       const MAX_DPR = 2;
 
       /* =========================================================
@@ -574,17 +574,17 @@
 
       const state = {
         pose: "side",
-        affection: 0,           // 0..100
+        affection: 0,
         totalHearts: 0,
-        purr: 0,                // 0..1
+        purr: 0,
         targetPurr: 0,
-        trap: 0,                // 0..100 (belly pose)
-        grabCooldown: 0,        // seconds
-        bristleCooldown: 0,     // seconds
-        headTilt: 0,            // radians (sit pose)
+        trap: 0,
+        grabCooldown: 0,
+        bristleCooldown: 0,
+        headTilt: 0,
         headTiltTarget: 0,
         headTiltVel: 0,
-        squishBoost: 0,         // 0..1 (捧脸杀 glow)
+        squishBoost: 0,
         doubleTouchActive: false,
         nightMode: false,
         audioMuted: false,
@@ -600,7 +600,7 @@
 
       const activePointers = new Map();
       const particles = [];
-      const textures = {}; // poseId -> { canvas, width, height, isFallback, cutoutOk }
+      const textures = {}; // poseId -> { canvas, width, height, isFallback, cutoutOk, cellOpaque }
 
       /* =========================================================
        * 3. Procedural WebAudio Cat Purr Synthesizer
@@ -630,13 +630,11 @@
             const ac = new AudioCtx();
             this.ctx = ac;
 
-            // Master output gain (controlled by purr level)
             const masterGain = ac.createGain();
             masterGain.gain.value = 0.0001;
             masterGain.connect(ac.destination);
             this.masterGain = masterGain;
 
-            // Warm lowpass filter
             const lp = ac.createBiquadFilter();
             lp.type = "lowpass";
             lp.frequency.value = 220;
@@ -644,7 +642,6 @@
             lp.connect(masterGain);
             this.filter = lp;
 
-            // Breathing modulation (slow ~0.42Hz swell)
             const breathGain = ac.createGain();
             breathGain.gain.value = 0.72;
             breathGain.connect(lp);
@@ -658,7 +655,6 @@
             breathDepth.connect(breathGain.gain);
             breathLfo.start();
 
-            // Purr rumble oscillators (~25Hz fundamental + ~50Hz overtone)
             const osc1 = ac.createOscillator();
             osc1.type = "sawtooth";
             osc1.frequency.value = 25.5;
@@ -679,7 +675,6 @@
             osc2.start();
             this.osc2 = osc2;
 
-            // Filtered noise flutter modulated at 26Hz (authentic throat vibration)
             const bufSize = ac.sampleRate * 2;
             const noiseBuf = ac.createBuffer(1, bufSize, ac.sampleRate);
             const data = noiseBuf.getChannelData(0);
@@ -720,9 +715,7 @@
               ac.resume().catch(() => {});
             }
             this.ready = true;
-          } catch (_) {
-            // Audio blocked or unsupported
-          }
+          } catch (_) {}
         }
 
         update(purrLevel, muted) {
@@ -775,8 +768,32 @@
       const purrAudio = new PurrAudio();
 
       /* =========================================================
-       * 4. Image Loading, White-BG Cutout & Fallback Placeholder
+       * 4. Image Loading, White-BG Cutout & Cell Opacity Culling
        * ========================================================= */
+      function computeCellOpaque(imgData, w, h) {
+        const mask = new Uint8Array(GRID_COLS * GRID_ROWS);
+        const d = imgData.data;
+        for (let r = 0; r < GRID_ROWS; r++) {
+          const y0 = Math.floor((r / GRID_ROWS) * h);
+          const y1 = Math.min(h - 1, Math.ceil(((r + 1) / GRID_ROWS) * h));
+          for (let c = 0; c < GRID_COLS; c++) {
+            const x0 = Math.floor((c / GRID_COLS) * w);
+            const x1 = Math.min(w - 1, Math.ceil(((c + 1) / GRID_COLS) * w));
+            let opaque = 0;
+            for (let y = y0; y <= y1 && !opaque; y += 2) {
+              for (let x = x0; x <= x1; x += 2) {
+                if (d[(y * w + x) * 4 + 3] > 8) {
+                  opaque = 1;
+                  break;
+                }
+              }
+            }
+            mask[r * GRID_COLS + c] = opaque;
+          }
+        }
+        return mask;
+      }
+
       function createFallbackCatCanvas(poseId) {
         const c = document.createElement("canvas");
         c.width = 520;
@@ -796,7 +813,6 @@
         g.strokeStyle = stroke;
 
         if (poseId === "side") {
-          // Tail on right
           g.beginPath();
           g.moveTo(115, 25);
           g.quadraticCurveTo(185, 10, 195, -55);
@@ -807,14 +823,12 @@
           g.strokeStyle = stroke;
           g.stroke();
 
-          // Body
           g.fillStyle = bodyColor;
           g.beginPath();
           g.ellipse(15, 22, 130, 74, 0, 0, Math.PI * 2);
           g.fill();
           g.stroke();
 
-          // Back stripes
           g.strokeStyle = stripeColor;
           g.lineWidth = 8;
           [-20, 15, 50].forEach(x => {
@@ -824,7 +838,6 @@
             g.stroke();
           });
 
-          // Head on left
           g.fillStyle = bodyColor;
           g.strokeStyle = stroke;
           g.lineWidth = 6;
@@ -833,7 +846,6 @@
           g.fill();
           g.stroke();
 
-          // Ears
           [[-158, -62, -172, -118, -118, -82], [-86, -78, -68, -120, -56, -62]].forEach(pts => {
             g.fillStyle = bodyColor;
             g.beginPath();
@@ -845,7 +857,6 @@
             g.stroke();
           });
 
-          // Closed happy eyes
           g.beginPath();
           g.arc(-132, -18, 10, Math.PI * 0.15, Math.PI * 0.85);
           g.stroke();
@@ -853,26 +864,22 @@
           g.arc(-92, -18, 10, Math.PI * 0.15, Math.PI * 0.85);
           g.stroke();
 
-          // Nose
           g.fillStyle = earInner;
           g.beginPath();
           g.arc(-112, -4, 6, 0, Math.PI * 2);
           g.fill();
         } else if (poseId === "belly") {
-          // Belly-up body
           g.fillStyle = bodyColor;
           g.beginPath();
           g.ellipse(0, 28, 108, 132, 0, 0, Math.PI * 2);
           g.fill();
           g.stroke();
 
-          // Soft cream belly patch
           g.fillStyle = "#fff7eb";
           g.beginPath();
           g.ellipse(0, 38, 72, 92, 0, 0, Math.PI * 2);
           g.fill();
 
-          // Four cute paws
           [[-86, -32], [86, -32], [-78, 108], [78, 108]].forEach(([px, py]) => {
             g.fillStyle = bodyColor;
             g.beginPath();
@@ -885,34 +892,29 @@
             g.fill();
           });
 
-          // Head
           g.fillStyle = bodyColor;
           g.beginPath();
           g.arc(0, -118, 68, 0, Math.PI * 2);
           g.fill();
           g.stroke();
 
-          // Eyes
           g.fillStyle = stroke;
           g.beginPath();
           g.arc(-22, -122, 6, 0, Math.PI * 2);
           g.arc(22, -122, 6, 0, Math.PI * 2);
           g.fill();
         } else {
-          // Sitting front
           g.fillStyle = bodyColor;
           g.beginPath();
           g.ellipse(0, 74, 96, 108, 0, 0, Math.PI * 2);
           g.fill();
           g.stroke();
 
-          // Chest fluff
           g.fillStyle = "#fff7eb";
           g.beginPath();
           g.ellipse(0, 56, 48, 64, 0, 0, Math.PI * 2);
           g.fill();
 
-          // Ears
           [[-64, -92, -88, -172, -18, -128], [64, -92, 88, -172, 18, -128]].forEach(pts => {
             g.fillStyle = bodyColor;
             g.beginPath();
@@ -924,28 +926,24 @@
             g.stroke();
           });
 
-          // Head
           g.fillStyle = bodyColor;
           g.beginPath();
           g.ellipse(0, -64, 88, 76, 0, 0, Math.PI * 2);
           g.fill();
           g.stroke();
 
-          // Rosy cheeks
           g.fillStyle = "rgba(242, 121, 153, 0.35)";
           g.beginPath();
           g.ellipse(-52, -46, 16, 10, 0, 0, Math.PI * 2);
           g.ellipse(52, -46, 16, 10, 0, 0, Math.PI * 2);
           g.fill();
 
-          // Eyes
           g.fillStyle = stroke;
           g.beginPath();
           g.arc(-32, -70, 8, 0, Math.PI * 2);
           g.arc(32, -70, 8, 0, Math.PI * 2);
           g.fill();
 
-          // Mouth :3
           g.beginPath();
           g.arc(-8, -46, 8, 0, Math.PI);
           g.arc(8, -46, 8, 0, Math.PI);
@@ -953,11 +951,12 @@
         }
         g.restore();
 
-        return { canvas: c, width: c.width, height: c.height, isFallback: true, cutoutOk: true };
+        const cellOpaque = computeCellOpaque(g.getImageData(0, 0, c.width, c.height), c.width, c.height);
+        return { canvas: c, width: c.width, height: c.height, isFallback: true, cutoutOk: true, cellOpaque };
       }
 
       function processLoadedImage(img) {
-        const maxSide = 720;
+        const maxSide = 560;
         const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
         const w = Math.max(1, Math.round(img.naturalWidth * scale));
         const h = Math.max(1, Math.round(img.naturalHeight * scale));
@@ -969,10 +968,10 @@
         octx.drawImage(img, 0, 0, w, h);
 
         let cutoutOk = false;
+        let cellOpaque = null;
         try {
           const imgData = octx.getImageData(0, 0, w, h);
           const d = imgData.data;
-          // Soft chroma-key removal for pure white studio backgrounds
           for (let i = 0; i < d.length; i += 4) {
             const r = d[i];
             const g = d[i + 1];
@@ -988,13 +987,14 @@
             }
           }
           octx.putImageData(imgData, 0, 0);
+          cellOpaque = computeCellOpaque(imgData, w, h);
           cutoutOk = true;
         } catch (_) {
-          // Likely file:// origin taint; gracefully keep original image + CSS multiply fallback
           cutoutOk = false;
+          cellOpaque = null;
         }
 
-        return { canvas: off, width: w, height: h, isFallback: false, cutoutOk };
+        return { canvas: off, width: w, height: h, isFallback: false, cutoutOk, cellOpaque };
       }
 
       function loadAllPoses() {
@@ -1026,7 +1026,7 @@
       }
 
       /* =========================================================
-       * 5. Spring-Mass Mesh Grid (Jelly / Stretch / Bristle)
+       * 5. Target-Field Spring-Mass Mesh (Persistent Dent, Wave, Stretch)
        * ========================================================= */
       const meshPoints = [];
 
@@ -1037,6 +1037,8 @@
             meshPoints.push({
               uNorm: c / GRID_COLS,
               vNorm: r / GRID_ROWS,
+              tx: 0,
+              ty: 0,
               dx: 0,
               dy: 0,
               vx: 0,
@@ -1048,65 +1050,148 @@
 
       function resetMeshMotion() {
         for (let i = 0; i < meshPoints.length; i++) {
-          meshPoints[i].dx = 0;
-          meshPoints[i].dy = 0;
-          meshPoints[i].vx = 0;
-          meshPoints[i].vy = 0;
+          const p = meshPoints[i];
+          p.tx = 0;
+          p.ty = 0;
+          p.dx = 0;
+          p.dy = 0;
+          p.vx = 0;
+          p.vy = 0;
         }
         state.headTilt = 0;
         state.headTiltTarget = 0;
         state.headTiltVel = 0;
       }
 
-      function applyJellyImpulse(nx, ny, fx, fy, radius = 0.24, maxDisp = 34) {
-        const r2 = radius * radius;
+      // Compute persistent target displacement (tx, ty) every frame from active contacts
+      function computeTargetDeformation() {
+        const W = state.imgBox.w;
+        const H = state.imgBox.h;
+
+        for (let i = 0; i < meshPoints.length; i++) {
+          meshPoints[i].tx = 0;
+          meshPoints[i].ty = 0;
+        }
+
+        if (activePointers.size === 0) return;
+
+        // Sit pose two-finger "捧脸杀" cheek squish
+        if (state.pose === "sit" && activePointers.size >= 2) {
+          const pts = Array.from(activePointers.values());
+          const p1 = pts[0];
+          const p2 = pts[1];
+          const midX = (p1.nx + p2.nx) * 0.5;
+          const midY = (p1.ny + p2.ny) * 0.5;
+          for (let i = 0; i < meshPoints.length; i++) {
+            const p = meshPoints[i];
+            const ddx = p.uNorm - midX;
+            const ddy = p.vNorm - midY;
+            const dist2 = ddx * ddx + ddy * ddy;
+            if (dist2 < 0.36) {
+              const w = Math.exp(-dist2 / 0.11);
+              p.tx += -ddx * (0.42 * W) * w;
+              p.ty += ddy * (0.18 * H) * w;
+            }
+          }
+          return;
+        }
+
+        // Per-pointer sustained contact deformation
+        activePointers.forEach(ptr => {
+          // 1) Side pose tail stretch (>= 1.4x visible stretch)
+          if (state.pose === "side" && ptr.isTailDrag) {
+            const rawPullX = ptr.sx - ptr.startSx;
+            const rawPullY = ptr.sy - ptr.startSy;
+            // Amplify pull so even a moderate drag visibly stretches the tail region to >= 1.4x
+            const pullX = Math.max(-0.42 * W, Math.min(0.62 * W, rawPullX * 1.48));
+            const pullY = Math.max(-0.48 * H, Math.min(0.48 * H, rawPullY * 1.38));
+            const stretchMag = Math.hypot(pullX, pullY) / Math.max(1, W);
+
+            for (let i = 0; i < meshPoints.length; i++) {
+              const p = meshPoints[i];
+              if (p.uNorm > 0.56) {
+                const tailT = (p.uNorm - 0.56) / 0.44; // 0 at tail root -> 1 at tip
+                const alongW = Math.pow(tailT, 1.12);
+                const vertW = Math.exp(-Math.pow((p.vNorm - ptr.startNy) / 0.44, 2));
+                const w = alongW * (0.35 + 0.65 * vertW);
+                p.tx += pullX * w;
+                p.ty += pullY * w;
+                // Subtle elastic thinning perpendicular to stretch
+                p.ty += (ptr.startNy - p.vNorm) * (0.12 * H) * stretchMag * alongW;
+              }
+            }
+            return;
+          }
+
+          // 2) Sustained Press-and-Hold Dent + Side Bulge + Drag Wave
+          const fx = ptr.nx;
+          const fy = ptr.ny;
+
+          // Peak dent depth: ~14% of displayed image height so back/belly silhouette dips >= 8-12%
+          const dentDepth = 0.145 * H;
+          const bulgeHoriz = 0.068 * W;
+          const bulgeUp = 0.036 * H;
+          const dentSigma2 = 2 * 0.185 * 0.185; // Wide enough to visibly pull the cat's outline
+
+          // Drag wave ahead of finger (active even at slow drag speeds!)
+          const waveStrength = ptr.dragMix; // 0 when purely holding, ramps to 1 during any slow/fast drag
+          const dirX = ptr.dirX;
+          const dirY = ptr.dirY;
+          const aheadX = fx + dirX * 0.11;
+          const aheadY = fy + dirY * 0.11;
+          const wavePushX = dirX * (0.078 * W) * waveStrength;
+          const wavePushY = (dirY * (0.045 * H) - 0.062 * H) * waveStrength; // Crest bulges visibly ahead
+          const waveSigma2 = 2 * 0.145 * 0.145;
+
+          for (let i = 0; i < meshPoints.length; i++) {
+            const p = meshPoints[i];
+            const ddx = p.uNorm - fx;
+            const ddy = p.vNorm - fy;
+            const dist2 = ddx * ddx + ddy * ddy;
+
+            if (dist2 < 0.42) {
+              const dist = Math.sqrt(dist2);
+              // Primary downward sink under finger (reaches silhouette!)
+              const sinkW = Math.exp(-dist2 / dentSigma2);
+              p.ty += dentDepth * sinkW;
+
+              // Volume-preserving lateral flesh bulge on both sides of the dent
+              const ringW = Math.exp(-Math.pow((dist - 0.20) / 0.11, 2));
+              if (ringW > 0.01) {
+                const horizSign = ddx / (dist + 0.045);
+                const flankFactor = Math.min(1, Math.abs(ddx) * 4.2);
+                p.tx += horizSign * bulgeHoriz * ringW;
+                p.ty -= bulgeUp * ringW * flankFactor;
+              }
+            }
+
+            // Moving flesh wave pushed ahead of the finger during slow or fast drags
+            if (waveStrength > 0.02) {
+              const adx = p.uNorm - aheadX;
+              const ady = p.vNorm - aheadY;
+              const adist2 = adx * adx + ady * ady;
+              if (adist2 < 0.28) {
+                const waveW = Math.exp(-adist2 / waveSigma2);
+                p.tx += wavePushX * waveW;
+                p.ty += wavePushY * waveW;
+              }
+            }
+          }
+        });
+      }
+
+      // Dynamic velocity kicks for tactile impact (tap, fast stroke ripple, bristle)
+      function addVelocityKick(nx, ny, kvx, kvy, radius = 0.24) {
+        const r2 = 2 * radius * radius;
         for (let i = 0; i < meshPoints.length; i++) {
           const p = meshPoints[i];
           const ddx = p.uNorm - nx;
           const ddy = p.vNorm - ny;
           const dist2 = ddx * ddx + ddy * ddy;
-          if (dist2 < r2 * 2.4) {
-            const w = Math.exp(-dist2 / (2 * r2 * 0.45));
-            p.dx = Math.max(-maxDisp, Math.min(maxDisp, p.dx + fx * w));
-            p.dy = Math.max(-maxDisp, Math.min(maxDisp, p.dy + fy * w));
-            p.vx += fx * w * 6.5;
-            p.vy += fy * w * 6.5;
-          }
-        }
-      }
-
-      // Sustained press dent: while a finger holds/drag on the cat, the flesh
-      // visibly sinks under the finger (down + outward), springs back on release.
-      function applyPressDent(nx, ny, dt) {
-        const blend = Math.min(1, dt * 11);
-        for (let i = 0; i < meshPoints.length; i++) {
-          const p = meshPoints[i];
-          const ddx = p.uNorm - nx;
-          const ddy = p.vNorm - ny;
-          const dist2 = ddx * ddx + ddy * ddy;
-          if (dist2 < 0.09) {
-            const w = Math.exp(-dist2 / 0.018);
-            const targetDx = ddx * state.imgBox.w * 0.42 * w;
-            const targetDy = (14 + ddy * state.imgBox.h * 0.18) * w;
-            p.dx += (targetDx - p.dx) * blend * w;
-            p.dy += (targetDy - p.dy) * blend * w;
-          }
-        }
-      }
-
-      function applyTailStretch(nx, ny, pullX, pullY) {
-        const clampedX = Math.max(-68, Math.min(76, pullX));
-        const clampedY = Math.max(-62, Math.min(62, pullY));
-        for (let i = 0; i < meshPoints.length; i++) {
-          const p = meshPoints[i];
-          if (p.uNorm > 0.64) {
-            const tailWeight = Math.pow((p.uNorm - 0.64) / 0.36, 1.35);
-            const vertFalloff = Math.exp(-Math.pow((p.vNorm - ny) / 0.34, 2));
-            const w = tailWeight * vertFalloff;
-            p.dx += (clampedX * w - p.dx) * 0.38;
-            p.dy += (clampedY * w - p.dy) * 0.38;
-            p.vx *= 0.65;
-            p.vy *= 0.65;
+          if (dist2 < r2 * 2.5) {
+            const w = Math.exp(-dist2 / r2);
+            p.vx += kvx * w;
+            p.vy += kvy * w;
           }
         }
       }
@@ -1117,40 +1202,23 @@
           const ddx = p.uNorm - nx;
           const ddy = p.vNorm - ny;
           const dist = Math.hypot(ddx, ddy);
-          if (dist < 0.38) {
-            const w = 1 - dist / 0.38;
-            const angle = Math.atan2(ddy, ddx) + (Math.random() - 0.5) * 0.8;
-            const kick = (160 + Math.random() * 140) * w;
+          if (dist < 0.42) {
+            const w = 1 - dist / 0.42;
+            const angle = Math.atan2(ddy, ddx) + (Math.random() - 0.5) * 0.7;
+            const kick = (260 + Math.random() * 190) * w;
             p.vx += Math.cos(angle) * kick;
-            p.vy += Math.sin(angle) * kick - 120 * w;
-          }
-        }
-      }
-
-      function applyCheekSquish(p1, p2) {
-        const midX = (p1.nx + p2.nx) * 0.5;
-        const midY = (p1.ny + p2.ny) * 0.5;
-        for (let i = 0; i < meshPoints.length; i++) {
-          const p = meshPoints[i];
-          const ddx = p.uNorm - midX;
-          const ddy = p.vNorm - midY;
-          const dist2 = ddx * ddx + ddy * ddy;
-          if (dist2 < 0.24) {
-            const w = Math.exp(-dist2 / 0.08);
-            // Pull horizontally inward & slightly puff vertically
-            const targetDx = -ddx * 72 * w;
-            const targetDy = ddy * 24 * w;
-            p.dx += (targetDx - p.dx) * 0.28;
-            p.dy += (targetDy - p.dy) * 0.28;
+            p.vy += Math.sin(angle) * kick - 210 * w;
           }
         }
       }
 
       function stepMesh(dt) {
+        computeTargetDeformation();
+
         for (let i = 0; i < meshPoints.length; i++) {
           const p = meshPoints[i];
-          const ax = -SPRING_K * p.dx - SPRING_DAMP * p.vx;
-          const ay = -SPRING_K * p.dy - SPRING_DAMP * p.vy;
+          const ax = SPRING_K * (p.tx - p.dx) - SPRING_DAMP * p.vx;
+          const ay = SPRING_K * (p.ty - p.dy) - SPRING_DAMP * p.vy;
           p.vx += ax * dt;
           p.vy += ay * dt;
           p.dx += p.vx * dt;
@@ -1190,7 +1258,7 @@
         // Expand clip polygon slightly from centroid to prevent hairline seams
         const cx = (x0 + x1 + x2) / 3;
         const cy = (y0 + y1 + y2) / 3;
-        const pad = 0.65;
+        const pad = 0.7;
         const ex = (x, y) => {
           const vx = x - cx;
           const vy = y - cy;
@@ -1221,8 +1289,8 @@
         const { x, y, w, h } = state.imgBox;
         const imgW = tex.width;
         const imgH = tex.height;
+        const cellOpaque = tex.cellOpaque;
 
-        // Subtle idle breathing scale
         const breath = 1 + Math.sin(state.time * 2.2) * (0.008 + state.purr * 0.008);
         const cx = x + w * 0.5;
         const cy = y + h * 0.5;
@@ -1238,6 +1306,8 @@
         const stride = GRID_COLS + 1;
         for (let r = 0; r < GRID_ROWS; r++) {
           for (let c = 0; c < GRID_COLS; c++) {
+            if (cellOpaque && !cellOpaque[r * GRID_COLS + c]) continue;
+
             const p00 = meshPoints[r * stride + c];
             const p10 = meshPoints[r * stride + (c + 1)];
             const p01 = meshPoints[(r + 1) * stride + c];
@@ -1258,7 +1328,6 @@
           }
         }
 
-        // Rosy blush glow during 捧脸杀
         if (state.pose === "sit" && state.squishBoost > 0.02) {
           ctx.globalAlpha = state.squishBoost * 0.45;
           const drawBlush = (bx, by) => {
@@ -1382,8 +1451,7 @@
         state.targetPurr = 0.08;
         state.affection = Math.max(0, state.affection - 8);
 
-        // Squeeze mesh inward around belly center
-        applyJellyImpulse(0.5, 0.52, 0, -18, 0.35, 30);
+        addVelocityKick(0.5, 0.52, 0, -240, 0.34);
         applyBristleBurst(0.5, 0.55);
 
         grabOverlay.classList.remove("active");
@@ -1439,7 +1507,6 @@
       }
 
       canvas.addEventListener("touchstart", e => {
-        // Prevent iOS Safari zoom/scroll/selection on long press
         e.preventDefault();
       }, { passive: false });
 
@@ -1448,7 +1515,7 @@
         const pt = getCanvasPoint(e);
         if (!isInsideCat(pt.nx, pt.ny)) return;
 
-        const isTailStart = state.pose === "side" && pt.nx > 0.72 && pt.ny > 0.25 && pt.ny < 0.92;
+        const isTailStart = state.pose === "side" && pt.nx > 0.66 && pt.ny > 0.20 && pt.ny < 0.94;
         activePointers.set(e.pointerId, {
           id: e.pointerId,
           sx: pt.sx,
@@ -1457,10 +1524,20 @@
           ny: pt.ny,
           startSx: pt.sx,
           startSy: pt.sy,
+          startNy: pt.ny,
+          anchorSx: pt.sx,
+          anchorSy: pt.sy,
+          dirX: 1,
+          dirY: 0,
+          dragMix: 0,
+          lastMoveAt: state.time,
           isTailDrag: isTailStart
         });
 
-        applyJellyImpulse(pt.nx, pt.ny, 0, 8, 0.2, 22);
+        // Initial tactile downward jelly bounce on contact
+        if (!isTailStart) {
+          addVelocityKick(pt.nx, pt.ny, 0, state.imgBox.h * 0.48, 0.20);
+        }
 
         if (state.pose === "sit" && activePointers.size >= 2) {
           state.doubleTouchActive = true;
@@ -1471,47 +1548,60 @@
       });
 
       window.addEventListener("pointermove", e => {
-        const prev = activePointers.get(e.pointerId);
-        if (!prev) return;
+        const ptr = activePointers.get(e.pointerId);
+        if (!ptr) return;
 
         const pt = getCanvasPoint(e);
-        const dx = pt.sx - prev.sx;
-        const dy = pt.sy - prev.sy;
+        const dx = pt.sx - ptr.sx;
+        const dy = pt.sy - ptr.sy;
         const dist = Math.hypot(dx, dy);
 
-        prev.sx = pt.sx;
-        prev.sy = pt.sy;
-        prev.nx = pt.nx;
-        prev.ny = pt.ny;
+        ptr.sx = pt.sx;
+        ptr.sy = pt.sy;
+        ptr.nx = pt.nx;
+        ptr.ny = pt.ny;
 
-        if (dist < 1.2) return;
+        // Track smoothed drag direction even on very slow drags (anchor-based)
+        const adx = pt.sx - ptr.anchorSx;
+        const ady = pt.sy - ptr.anchorSy;
+        const aDist = Math.hypot(adx, ady);
+        if (aDist >= 2.2) {
+          const ndx = adx / aDist;
+          const ndy = ady / aDist;
+          ptr.dirX = ptr.dirX * 0.65 + ndx * 0.35;
+          ptr.dirY = ptr.dirY * 0.65 + ndy * 0.35;
+          const norm = Math.hypot(ptr.dirX, ptr.dirY) || 1;
+          ptr.dirX /= norm;
+          ptr.dirY /= norm;
+          ptr.anchorSx = pt.sx;
+          ptr.anchorSy = pt.sy;
+          ptr.dragMix = Math.min(1, ptr.dragMix + 0.35);
+          ptr.lastMoveAt = state.time;
+        }
+
+        if (dist < 0.8) return;
 
         // Pose 1: Side-lying
         if (state.pose === "side") {
-          if (prev.isTailDrag) {
-            const pullX = pt.sx - prev.startSx;
-            const pullY = pt.sy - prev.startSy;
-            applyTailStretch(pt.nx, pt.ny, pullX, pullY);
-            if (Math.hypot(pullX, pullY) > 28 && state.time - state.lastToastAt > 1.8) {
+          if (ptr.isTailDrag) {
+            const pullDist = Math.hypot(pt.sx - ptr.startSx, pt.sy - ptr.startSy);
+            if (pullDist > 26 && state.time - state.lastToastAt > 1.8) {
               state.lastToastAt = state.time;
               showToast("🐱 哎呀，别拽尾巴尖啦~", 1100);
             }
             return;
           }
 
-          // Jelly push following finger
-          applyJellyImpulse(pt.nx, pt.ny, dx * 1.5, dy * 1.5, 0.3, 48);
+          // Subtle extra velocity ripple on faster strokes
+          addVelocityKick(pt.nx, pt.ny, dx * 4.2, dy * 3.6, 0.18);
 
-          // Check back stroking zone
           const onBack = pt.nx > 0.14 && pt.nx < 0.78 && pt.ny > 0.16 && pt.ny < 0.78;
           if (onBack && Math.abs(dx) > Math.abs(dy) * 0.55) {
-            if (dx > 0.8) {
-              // With the fur (顺毛: left -> right)
+            if (dx > 0.5) {
               const gain = Math.min(2.4, dist * 0.055);
               state.targetPurr = Math.min(1, state.targetPurr + dist * 0.014);
               addAffection(gain, pt.sx, pt.sy);
-            } else if (dx < -1.8) {
-              // Against the fur (逆毛: right -> left)
+            } else if (dx < -1.4) {
               state.targetPurr = Math.max(0, state.targetPurr - 0.12);
               state.affection = Math.max(0, state.affection - dist * 0.032);
               if (state.bristleCooldown <= 0) {
@@ -1524,7 +1614,6 @@
               }
             }
           } else {
-            // Gentle general petting
             state.targetPurr = Math.min(0.65, state.targetPurr + dist * 0.006);
             addAffection(dist * 0.018, pt.sx, pt.sy);
           }
@@ -1533,7 +1622,7 @@
 
         // Pose 2: Belly-up
         if (state.pose === "belly") {
-          applyJellyImpulse(pt.nx, pt.ny, dx * 1.6, dy * 1.6, 0.3, 48);
+          addVelocityKick(pt.nx, pt.ny, dx * 4.5, dy * 4.2, 0.20);
           if (state.grabCooldown > 0) return;
 
           const onBelly = pt.nx > 0.2 && pt.nx < 0.8 && pt.ny > 0.28 && pt.ny < 0.86;
@@ -1561,17 +1650,15 @@
           if (activePointers.size >= 2) {
             state.doubleTouchActive = true;
             const pts = Array.from(activePointers.values());
-            applyCheekSquish(pts[0], pts[1]);
             state.targetPurr = Math.min(1, state.targetPurr + dist * 0.026);
             addAffection(Math.min(3.6, dist * 0.09), pt.sx, pt.sy);
             if (Math.random() < 0.38) {
               spawnParticle((pts[0].sx + pts[1].sx) * 0.5, (pts[0].sy + pts[1].sy) * 0.5, "heart");
             }
           } else {
-            applyJellyImpulse(pt.nx, pt.ny, dx * 1.3, dy * 1.3, 0.28, 40);
+            addVelocityKick(pt.nx, pt.ny, dx * 3.8, dy * 3.5, 0.18);
             const onFace = pt.nx > 0.16 && pt.nx < 0.84 && pt.ny > 0.12 && pt.ny < 0.66;
             if (onFace) {
-              // Tilt head smoothly with chin/cheek rub
               const tiltDelta = (dx / state.stageW) * 1.1;
               state.headTiltTarget = Math.max(-0.24, Math.min(0.24, state.headTiltTarget + tiltDelta));
               state.targetPurr = Math.min(1, state.targetPurr + dist * 0.014);
@@ -1588,7 +1675,6 @@
         if (!activePointers.has(e.pointerId)) return;
         const p = activePointers.get(e.pointerId);
         if (p && p.isTailDrag) {
-          // Elastic snap-back feedback
           purrAudio.playPop(380, 0.07);
         }
         activePointers.delete(e.pointerId);
@@ -1615,8 +1701,9 @@
 
         const tex = textures[state.pose];
         const aspect = tex ? tex.width / tex.height : 1;
-        const padW = state.stageW * 0.84;
-        const padH = state.stageH * 0.80;
+        // Leave comfortable room around silhouette for deep dents & >=1.4x tail stretch
+        const padW = state.stageW * 0.78;
+        const padH = state.stageH * 0.76;
 
         let drawW = padW;
         let drawH = drawW / aspect;
@@ -1673,10 +1760,16 @@
         if (state.grabCooldown > 0) state.grabCooldown = Math.max(0, state.grabCooldown - dt);
         if (state.bristleCooldown > 0) state.bristleCooldown = Math.max(0, state.bristleCooldown - dt);
 
+        // Gently relax drag wave if finger stops moving (while keeping the press-and-hold dent!)
+        activePointers.forEach(ptr => {
+          if (state.time - ptr.lastMoveAt > 0.14) {
+            ptr.dragMix = Math.max(0, ptr.dragMix - dt * 2.8);
+          }
+        });
+
         // Hold gentle squish while two fingers stay pressed in sit pose
         if (state.pose === "sit" && activePointers.size >= 2) {
           const pts = Array.from(activePointers.values());
-          applyCheekSquish(pts[0], pts[1]);
           state.targetPurr = Math.min(1, state.targetPurr + dt * 0.45);
           addAffection(dt * 12, (pts[0].sx + pts[1].sx) * 0.5, (pts[0].sy + pts[1].sy) * 0.5);
           state.squishBoost = Math.min(1, state.squishBoost + dt * 4);
@@ -1700,10 +1793,7 @@
           triggerVibrate(Math.round(14 + state.purr * 18));
         }
 
-        // Sustained dent under any holding finger, then step physics
-        activePointers.forEach(p => {
-          if (!p.isTailDrag) applyPressDent(p.nx, p.ny, dt);
-        });
+        // Step mesh physics
         stepMesh(dt);
 
         // Update HUD DOM
